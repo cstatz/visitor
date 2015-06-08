@@ -27,7 +27,7 @@ sys.stdin.flush()
 
 class VisitInstrumentation(object):
     
-    def __init__(self, name, description, prefix=None, step=None, cycle_time_provider=None, trace=False, master=True, ui=None, input=None, init_env=True):
+    def __init__(self, name, description, prefix=".", step=None, cycle_time_provider=None, trace=False, master=True, ui=None, input=None, init_env=True):
 
         self.__step = step
         self.__cycle_time_provider = cycle_time_provider
@@ -37,6 +37,7 @@ class VisitInstrumentation(object):
         self.__input = input
         self.__name = name
         self.__master = master
+        self.__description = description
 
         if trace: 
             self.__trace_qualifier = "trace.%s.%s.%i.txt" % (self.__name, socket.gethostname(), os.getpid())
@@ -47,7 +48,7 @@ class VisitInstrumentation(object):
             VisItSetupEnvironment()
 
         if self.__master:
-            if not VisItInitializeSocketAndDumpSimFile(self.__name, description, os.getcwd(), self.__input, self.__ui, self.__prefix+'/'+self.__name+'.sim2'):
+            if not VisItInitializeSocketAndDumpSimFile(self.__name, self.__description, os.getcwd(), self.__input, self.__ui, self.__prefix+'/'+self.__name+'.sim2'):
                 raise ValueError('VisItInitializeSocketAndDumpSimFile failed for some reason!')
 
         self.timeout = 10000   # us
