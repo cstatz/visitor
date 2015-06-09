@@ -95,13 +95,17 @@ class VisitInstrumentation(object):
     def __del__(self):
 
         if self.visit_is_connected:
+            VisItSynchronize()
             VisItDisconnect()
+            self.logger.debug("VisIt disconnected.")
 
         if self.__master:
             os.remove(self.__prefix+'/'+self.__name+'.sim2')
+            self.logger.debug("Sim2 file %s removed." % (self.__prefix+'/'+self.__name+'.sim2'))
 
         if self.__trace_qualifier is not None: 
             VisItCloseTraceFile()
+            self.logger.debug("VisIt trace file closed.")
 
     def step_wrapper(self, step):
 
@@ -144,7 +148,7 @@ class VisitInstrumentation(object):
         elif state == S.CSI.value:
             self.process_console_command()
         else:
-            self.logger.warn("Visit state error: %s" % state)
+            self.logger.warn("Visit state unexpected: %s" % state)
 
     def run(self):
 
@@ -160,8 +164,7 @@ class VisitInstrumentation(object):
 
         if VisItAttemptToCompleteConnection() == VISIT_OKAY:
             self.logger.info("VisIt connected.")
-
-            self.run_mode = VISIT_SIMMODE_STOPPED
+            self.__gc_halt()
             VisItSetCommandCallback(self.__cb_command, 0)
             VisItSetGetMetaData(self.__cb_metadata, 0)
             VisItSetGetMesh(self.__cb_mesh, 0)
@@ -171,12 +174,19 @@ class VisitInstrumentation(object):
             self.visit_is_connected = True
             VisItSetGetDomainList(self.__cb_domain_list, 0)
         else:
-            self.logger.warn("Connection to VisIt failed.")
- 
+            self.logger.warn("Connection to VisIt failed: %s" % VisItGetLastError)
+
     def process_engine_command(self):
-        if VisItProcessEngineCommand() != VISIT_OKAY:
+
+        value = VisItProcessEngineCommand()
+        self.logger.debug("VisItProcessEngineCommand returned %d" % value)
+
+        if value != VISIT_OKAY:
+            self.logger.debug("VisIt encountered an error: %s" % VisItGetLastError())
+            VisItSynchronize()
             VisItDisconnect()
-            self.run_mode = VISIT_SIMMODE_RUNNING
+            self.logger.debug("VisIt disconnected.")
+            self.__gc_run()
             self.visit_is_connected = False
 
     def process_console_command(self):
