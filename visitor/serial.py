@@ -515,6 +515,8 @@ class VisitInstrumentation(object):
         number_of_domains = self.__meshes[name]['number_of_domains']
         assert len(domains) <= number_of_domains
 
+        self.logger.debug("Domain list contains %d domains (%s) for mesh: %s" % (number_of_domains, str(domains), name))
+
         VisIt_DomainList_setDomains(h, number_of_domains, hdl)
 
         return h
