@@ -18,12 +18,9 @@ OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
 STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
 EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-----------------------------------------------------------------------------
-Some parts are derived from works:
-
-This file is  part of VisIt. For  details, see https://visit.llnl.gov/.  The
-full copyright notice is contained in the file COPYRIGHT located at the root
-of the VisIt distribution or at http://www.llnl.gov/visit/copyright.html.
+-----------------------------------------------------------------------------------
+Some parts are derived from works provided by the VisIt developers 
+(libsim python examples, https://visit.llnl.gov/) and Fred Morris (simbase.py):
 
 Redistribution  and  use  in  source  and  binary  forms,  with  or  without
 modification, are permitted provided that the following conditions are met:
