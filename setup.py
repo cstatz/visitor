@@ -14,5 +14,5 @@ setup(name='visitor',
       author_email='christoph.statz@tu-dresden.de',
       url='http://www.cstatz.de/python',
       packages=find_packages(),
-      install_requires=['numpy>=1.8.0', 'enum34', 'mpi4py'],
+      install_requires=['numpy>=1.8.0', 'enum34', 'mpi4py', 'nicelog>=0.1.9'],
       )
