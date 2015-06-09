@@ -3,6 +3,8 @@
 from __future__ import division
 
 import sys
+import logging
+from distutils.version import LooseVersion
 
 from .helper import get_visit_dirs
 from .serial import VisitInstrumentation
@@ -22,6 +24,7 @@ class ParallelVisitInstrumentation(VisitInstrumentation):
     def __init__(self, name, description, prefix=None, step=None, cycle_time_provider=None, trace=False, ui=None, input=None):
 
         import mpi4py.MPI as MPI
+        from mpi4py import __version__ as mpi4py_version
 
         self.__comm = MPI.COMM_WORLD
         self.__rank = MPI.COMM_WORLD.Get_rank()
@@ -32,8 +35,10 @@ class ParallelVisitInstrumentation(VisitInstrumentation):
         VisItSetParallel(self.__size > 1)
         VisItSetParallelRank(self.__rank)
 
-        # TODO: VisItSetMPICommunicator does not work with mpi4py. Segfault -> Bugreport
-        # VisItSetMPICommunicator(MPI.COMM_WORLD)
+        if LooseVersion(mpi4py_version) > LooseVersion("2.0.0"):
+            # TODO: Pass MPI Communicator
+            #VisItSetMPICommunicator(MPI._addressof(MPI.COMM_WORLD))
+            pass
 
         env = None
         if self.__rank == 0:
@@ -44,6 +49,8 @@ class ParallelVisitInstrumentation(VisitInstrumentation):
 
         VisitInstrumentation.__init__(self, name, description, prefix=prefix, step=step, cycle_time_provider=cycle_time_provider, trace=trace, master=self.__rank==0, ui=ui, input=input, init_env=False)
 
+        self.logger = logging.getLogger(__name__)
+
     def __bcast_int(self, data, sender):
 
         if self.__rank == sender:
@@ -53,18 +60,6 @@ class ParallelVisitInstrumentation(VisitInstrumentation):
 
     def __bcast_string(self, data, length, sender):
         return self.__bcast_int(data, sender)
-
-    def __cb_domain_list(self, name, cbdata):
-        h = VisIt_DomainList_alloc()
-
-        if h == VISIT_INVALID_HANDLE:
-            return h
-
-        hdl = VisIt_VariableData_alloc()
-        VisIt_VariableData_setDataI(hdl, VISIT_OWNER_VISIT, 1, 1, [self.__rank])
-        VisIt_DomainList_setDomains(h, self.__size, hdl)
-
-        return h
 
     def get_input_from_visit(self):
 
@@ -89,14 +84,14 @@ class ParallelVisitInstrumentation(VisitInstrumentation):
             success = VisItProcessEngineCommand()
 
             if success == VISIT_OKAY:
-                self.__comm.bcast(VISIT_COMMAND_SUCCESS)
+                self.__comm.bcast(VISIT_COMMAND_SUCCESS, root=0)
                 return
             else:
-                self.__comm.bcast(VISIT_COMMAND_FAILURE)
+                self.__comm.bcast(VISIT_COMMAND_FAILURE, root=0)
 
         else:
             while True:
-                command = self.__comm.bcast(root=0)
+                command = self.__comm.bcast(None, root=0)
                 if command == VISIT_COMMAND_PROCESS:
                     VisItProcessEngineCommand()
                 elif command == VISIT_COMMAND_SUCCESS:
@@ -120,7 +115,7 @@ class ParallelVisitInstrumentation(VisitInstrumentation):
 
         try:
             cmd = self.commands['console'][command]
-            cmd['Handle'](cmd['Args'])
+            cmd['function'](cmd['arguments'])
         except:
             pass
 
@@ -130,10 +125,20 @@ class ParallelVisitInstrumentation(VisitInstrumentation):
 
         if self.visit_is_connected:
             VisItSetSlaveProcessCallback(self.__cb_slave_process)
-            VisItSetGetDomainList(self.__cb_domain_list, 0)
 
-    def register_mesh(self, name, dp, mesh_type, spatial_dimension, **kwargs):
+    def register_mesh(self, name, dp, mesh_type, spatial_dimension, domain=None, number_of_domains=None, **kwargs):
 
-        kwargs['NumDomains'] = self.__size
-        VisitInstrumentation.register_mesh(self, name, dp, mesh_type, spatial_dimension, **kwargs)
+        if domain is None:
+            domain = self.__rank
 
+        if number_of_domains is None:
+            number_of_domains = self.__size
+
+        VisitInstrumentation.register_mesh(self, name, dp, mesh_type, spatial_dimension, domain=domain, number_of_domains=number_of_domains, **kwargs)
+
+    def register_variable(self, name, mesh_name, dp, var_type, centering, domain=None, **kwargs):
+
+        if domain is None:
+            domain = self.__rank
+
+        VisitInstrumentation.register_variable(self, name, mesh_name, dp, var_type, centering, domain=domain, **kwargs)

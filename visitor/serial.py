@@ -6,8 +6,8 @@ import sys
 import os
 import socket
 import time
+import logging
 
-from warnings import warn
 
 from .helper import get_visit_dirs, get_dtype_size_owner, S, P
 
@@ -38,6 +38,9 @@ class VisitInstrumentation(object):
         self.__name = name
         self.__master = master
         self.__description = description
+        self.__domains = dict()
+        self.__number_of_domains = dict()
+        self.logger = logging.getLogger(__name__)
 
         if trace: 
             self.__trace_qualifier = "trace.%s.%s.%i.txt" % (self.__name, socket.gethostname(), os.getpid())
@@ -49,6 +52,7 @@ class VisitInstrumentation(object):
 
         if self.__master:
             if not VisItInitializeSocketAndDumpSimFile(self.__name, self.__description, os.getcwd(), self.__input, self.__ui, self.__prefix+'/'+self.__name+'.sim2'):
+                self.logger.error('VisItInitializeSocketAndDumpSimFile failed for some reason!')
                 raise ValueError('VisItInitializeSocketAndDumpSimFile failed for some reason!')
 
         self.timeout = 10000   # us
@@ -140,15 +144,13 @@ class VisitInstrumentation(object):
         elif state == S.CSI.value:
             self.process_console_command()
         else:
-            warn("Visit state error: %s" % state)
+            self.logger.warn("Visit state error: %s" % state)
 
     def run(self):
 
         while True:
 
-            abort = self.step_wrapper(self.__step)
-
-            if abort:
+            if self.step_wrapper(self.__step):
                 break
 
     def get_input_from_visit(self):
@@ -157,6 +159,8 @@ class VisitInstrumentation(object):
     def connect_visit(self):
 
         if VisItAttemptToCompleteConnection() == VISIT_OKAY:
+            self.logger.info("VisIt connected.")
+
             self.run_mode = VISIT_SIMMODE_STOPPED
             VisItSetCommandCallback(self.__cb_command, 0)
             VisItSetGetMetaData(self.__cb_metadata, 0)
@@ -165,6 +169,9 @@ class VisitInstrumentation(object):
             if self.__master:
                 VisItSetGetCurve(self.__cb_curve, 0)
             self.visit_is_connected = True
+            VisItSetGetDomainList(self.__cb_domain_list, 0)
+        else:
+            self.logger.warn("Connection to VisIt failed.")
  
     def process_engine_command(self):
         if VisItProcessEngineCommand() != VISIT_OKAY:
@@ -183,9 +190,11 @@ class VisitInstrumentation(object):
 
     def __gc_run(self, *args):
         self.run_mode = VISIT_SIMMODE_RUNNING
-    
+        self.logger.info("Simulation running.")
+
     def __gc_halt(self, *args):
         self.run_mode = VISIT_SIMMODE_STOPPED
+        self.logger.info("Simulation stopped.")
     
     def __gc_step(self, *args):
         if callable(self.__step):
@@ -197,25 +206,30 @@ class VisitInstrumentation(object):
             VisItSynchronize()
     
     def __gc_quit(self, *args):
+        self.logger.info("Simulation done.")
         self.done = True
 
     def __gc_mem_usage(self, *args):
-        print "VisIt Memory Usage:", VisItGetMemory()
+        self.logger.info("VisIt Memory Usage: %s", str(VisItGetMemory()))
 
     def __cb_command(self, command, visit_args, cbdata):
 
-         try:
-             cmd = self.commands['generic'][command]
-             cmd['function'](cmd['arguments'])
-         except:
-             try:    
-                 cmd = self.commands['custom'][command]
-                 cmd['function'](cmd['arguments'])
-             except:
-                 pass
-             pass
+        self.logger.debug("VisIt command callback: %s" % (command))
+
+        try:
+            cmd = self.commands['generic'][command]
+            cmd['function'](cmd['arguments'])
+        except:
+            try:
+                cmd = self.commands['custom'][command]
+                cmd['function'](cmd['arguments'])
+            except:
+                pass
+            pass
    
     def __cb_metadata(self, cbdata):
+
+        self.logger.debug("VisIt metadata callback.")
 
         md = VisIt_SimulationMetaData_alloc()
         if md == VISIT_INVALID_HANDLE: return md
@@ -317,27 +331,46 @@ class VisitInstrumentation(object):
 
         return md
 
-    def register_mesh(self, name, dp, mesh_type, spatial_dimension, **kwargs):
+    def register_mesh(self, name, dp, mesh_type, spatial_dimension, domain=0, number_of_domains=1, **kwargs):
 
-        if name in self.__meshes.keys():
-            raise ValueError('Mesh with name %s is already registred!' % name)
+        try:
+            mesh = self.__meshes[name]
+        except:
+            mesh = dict()
 
-        mesh = dict()
-        mesh['mesh_type'] = mesh_type
-        mesh['data_provider'] = dp
-        mesh['name'] = name
-        mesh['mesh_type'] = mesh_type
-        mesh['spatial_dimension'] = spatial_dimension
+        if domain is not 'omit':
+            if name in self.__meshes.keys() and domain in mesh['data_provider']:
+                raise ValueError('Mesh with name %s and domain %d is already registred!' % (name, domain))
 
-        for key in kwargs.keys():
-            mesh[key] = kwargs[key]
+            try:
+                mesh['data_provider']
+            except:
+                mesh['data_provider'] = dict()
+
+            mesh['data_provider'][domain] = dp
+            self.logger.debug("Registered mesh %s, domain %d." % (name, domain))
+
+        if name not in self.__meshes.keys():
+            mesh['mesh_type'] = mesh_type
+            mesh['name'] = name
+            mesh['spatial_dimension'] = spatial_dimension
+            mesh['number_of_domains'] = number_of_domains
+
+            for key in kwargs.keys():
+                mesh[key] = kwargs[key]
+
+        if 'domain_piece_name' in kwargs:
+            mesh['domain_piece_name'] = kwargs['domain_piece_name']
 
         self.__meshes[name] = mesh 
     
     def register_curve(self, name, dp, **kwargs):
 
+        self.logger.debug("Registered curve %s." % (name))
+
         if self.__master:
             if name in self.__curves.keys():
+                self.logger.error('Curve with name %s is already registred!' % name)
                 raise ValueError('Curve with name %s is already registred!' % name)
 
             curve = dict()
@@ -351,7 +384,10 @@ class VisitInstrumentation(object):
 
     def __register_command(self, category, name, func, args):
 
+        self.logger.debug("Registered command %s, category %s." % (name, category))
+
         if name in self.commands[category].keys():
+            self.logger.errer('Command with name %s is already registered!' % name)
             raise ValueError('Command with name %s is already registered!' % name)
 
         command = dict()
@@ -376,26 +412,51 @@ class VisitInstrumentation(object):
         self.register_generic_command(name, func, args)
 
     def register_ui_value(self, name, func, args):
+
+        self.logger.debug("Registered ui value: %s." % (name))
+
         VisItUI_valueChanged(name, func, args)
 
     def register_ui_state(self, name, func, args):
+
+        self.logger.debug("Registered ui state: %s." % (name))
+
         VisItUI_stateChanged(name, func, args)
 
     def register_ui_set_int(self, name, func):
+
+        self.logger.debug("Registered ui set int: %s." % (name))
+
         self.__ui_set_int[name] = func
         self.__ui_val_int_old[name] = 0
 
     def register_ui_set_string(self, name, func):
+
+        self.logger.debug("Registered ui set string: %s." % (name))
+
         self.__ui_set_string[name] = func
         self.__ui_val_string_old[name] = ""
 
-    def register_variable(self, name, mesh_name, dp, var_type, centering, **kwargs):
+    def register_variable(self, name, mesh_name, dp, var_type, centering, domain=0, **kwargs):
 
-        if name in self.__variables.keys():
-            raise ValueError('Variable with name %s is already registred!' % name)
+        self.logger.debug("Registered variable %s, domain %d." % (name, domain))
 
-        variable = dict()
-        variable['data_provider'] = dp
+        try:
+            variable = self.__variables[name]
+        except:
+            variable = dict()
+
+        if domain is not 'omit':
+            if name in self.__variables.keys() and domain in variable['data_provider']:
+                self.logger.error('Variable with name %s and domain %d is already registred!' % (name, domain))
+                raise ValueError('Variable with name %s and domain %d is already registred!' % (name, domain))
+
+            try:
+                variable['data_provider']
+            except:
+                variable['data_provider'] = dict()
+
+        variable['data_provider'][domain] = dp
         variable['name'] = name
         variable['mesh_name'] = mesh_name
         variable['type'] = var_type
@@ -408,7 +469,10 @@ class VisitInstrumentation(object):
 
     def register_expression(self, name, expr, var_type, **kwargs):
 
+        self.logger.debug("Registered expression %s, domain %d." % (name))
+
         if name in self.__expressions.keys():
+            self.logger.errer('Variable with name %s is already registred!' % name)
             raise ValueError('Variable with name %s is already registred!' % name)
 
         expression = dict()
@@ -419,13 +483,39 @@ class VisitInstrumentation(object):
         for key in kwargs.keys():
             expression[key] = kwargs[key]
 
-        self.__expressions[name] = expression 
+        self.__expressions[name] = expression
+
+    def __cb_domain_list(self, name, cbdata):
+
+        self.logger.debug("VisIt domain list callback for mesh: %s" % (name))
+
+        h = VisIt_DomainList_alloc()
+
+        if h == VISIT_INVALID_HANDLE:
+            return h
+
+        hdl = VisIt_VariableData_alloc()
+
+        try:
+            domains = self.__meshes[name]['data_provider'].keys()
+            VisIt_VariableData_setDataI(hdl, VISIT_OWNER_VISIT, 1, len(domains), domains)
+        except:
+            domains = []
+
+        number_of_domains = self.__meshes[name]['number_of_domains']
+        assert len(domains) <= number_of_domains
+
+        VisIt_DomainList_setDomains(h, number_of_domains, hdl)
+
+        return h
 
     def __cb_mesh(self, domain, name, cbdata):
 
+        self.logger.debug("VisIt callback for mesh %s, domain %d" % (name, domain))
+
         try:
             mesh = self.__meshes[name]
-            dp = mesh['data_provider']
+            dp = mesh['data_provider'][domain]
             if mesh['mesh_type'] == VISIT_MESHTYPE_UNSTRUCTURED:
                  return self.__unstructured_mesh(*dp())
             elif mesh['mesh_type'] == VISIT_MESHTYPE_CSG:
@@ -441,14 +531,20 @@ class VisitInstrumentation(object):
 
     def __cb_variable(self, domain, name, cbdata):
 
+        self.logger.debug("VisIt callback for variable %s, domain %d" % (name, domain))
+
         try:
             variable = self.__variables[name]
-            dp = variable['data_provider']
+            dp = variable['data_provider'][domain]
             return self.__variable(dp())
         except:
+            self.logger.critical("Inavlid handle for variable %s, domain %d" % (name, domain))
             return VISIT_INVALID_HANDLE
     
     def __cb_curve(self, name, cbdata):
+
+        self.logger.debug("VisIt callback for curve: %s" % (name))
+
         try:
             curve = self.__curves[name]
             dp = curve['data_provider']
